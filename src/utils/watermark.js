@@ -61,66 +61,66 @@ export const addWatermarkToImage = async (imageSrc, data) => {
                 }
 
                 // --- Watermark Text ---
-                const fontSize = Math.max(20, img.width * 0.035); // Slightly larger font
+                const fontSize = Math.max(20, img.width * 0.035);
                 ctx.font = `bold ${fontSize}px monospace`;
-                ctx.textBaseline = 'bottom';
+                ctx.textBaseline = 'top'; // Use top for easier layout
 
-                // Calculate lines for Address (Wrap logic)
-                const fullAddress = (data.locationName || '').trim();
-                let addressLine1 = fullAddress;
-                let addressLine2 = '';
+                const padding = 20;
+                const lineHeight = fontSize * 1.4; // More breathing room
+                const maxWidth = canvas.width - (padding * 2);
 
-                // Target split point (e.g. 40 chars to fill width better, as requested "more to the right")
-                const maxLineLength = 40;
+                // Helper to wrap text based on canvas width
+                const wrapText = (text, maxW) => {
+                    const words = text.split(' ');
+                    const lines = [];
+                    let currentLine = '';
 
-                if (fullAddress.length > maxLineLength) {
-                    // Find a space near the limit to break cleanly, searching backwards from the limit
-                    // We search from index 40 backwards to find the last space of the first line
-                    let breakPoint = fullAddress.lastIndexOf(' ', maxLineLength);
+                    words.forEach(word => {
+                        const testLine = currentLine ? `${currentLine} ${word}` : word;
+                        const testWidth = ctx.measureText(testLine).width;
+                        if (testWidth > maxW && currentLine) {
+                            lines.push(currentLine);
+                            currentLine = word;
+                        } else {
+                            currentLine = testLine;
+                        }
+                    });
+                    if (currentLine) lines.push(currentLine);
+                    return lines;
+                };
 
-                    // Safety: if the first word is huge (no space found before 40), try finding one *after* 40
-                    if (breakPoint === -1) {
-                        breakPoint = fullAddress.indexOf(' ', maxLineLength);
-                    }
+                const addressLines = wrapText(`LOCALIDAD: ${data.locationName || ''}`, maxWidth);
 
-                    // If still no space (entire address is one giant string), force split
-                    if (breakPoint === -1) breakPoint = maxLineLength;
+                // Final lines to draw
+                const headerLines = [
+                    `ID: ${data.employeeId}`,
+                    `FECHA: ${data.timestamp}`,
+                    `UBICACION: ${data.coords}`
+                ];
 
-                    addressLine1 = fullAddress.substring(0, breakPoint);
-                    addressLine2 = fullAddress.substring(breakPoint).trim();
-                }
-
-                // Layout
-                const padding = 15;
-                const lineHeight = fontSize * 1.3;
-                // Lines: ID, Date, Coords, Loc1, Loc2
-                const lineCount = 5;
-                const textBlockHeight = (lineHeight * lineCount) + (padding * 2);
+                const totalLines = headerLines.length + addressLines.length;
+                const textBlockHeight = (lineHeight * totalLines) + (padding * 2);
 
                 // Background
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)'; // Slightly darker for better contrast
                 ctx.fillRect(0, canvas.height - textBlockHeight, canvas.width, textBlockHeight);
 
                 // Draw Text
                 ctx.fillStyle = '#ffffff';
-                let y = canvas.height - textBlockHeight + padding + fontSize;
-                const x = padding;
+                let currentY = canvas.height - textBlockHeight + padding;
+                const currentX = padding;
 
-                ctx.fillText(`ID: ${data.employeeId}`, x, y);
-                y += lineHeight;
-                ctx.fillText(`FECHA: ${data.timestamp}`, x, y);
-                y += lineHeight;
-                ctx.fillText(`UBICACIÓN: ${data.coords}`, x, y);
-                y += lineHeight;
+                // Draw Headers
+                headerLines.forEach(line => {
+                    ctx.fillText(line, currentX, currentY);
+                    currentY += lineHeight;
+                });
 
-                // Address Line 1
-                ctx.fillText(`LOCALIDAD: ${addressLine1}`, x, y);
-                y += lineHeight;
-
-                // Address Line 2 (only if exists)
-                if (addressLine2) {
-                    ctx.fillText(`           ${addressLine2}`, x, y); // Indent slightly
-                }
+                // Draw Wrapped Address
+                addressLines.forEach(line => {
+                    ctx.fillText(line, currentX, currentY);
+                    currentY += lineHeight;
+                });
 
                 resolve(canvas.toDataURL('image/jpeg', 0.8));
             }

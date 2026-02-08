@@ -1,42 +1,122 @@
 import React, { useEffect, useState } from 'react';
 import { db } from '../firebaseConfig';
-import { collection, query, orderBy, getDocs } from 'firebase/firestore';
+import { collection, query, orderBy, getDocs, limit, startAfter, deleteDoc, doc, writeBatch, where } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
-import { Download, Calendar } from 'lucide-react';
+import { Download, Calendar, Trash2, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
 export default function Admin() {
     const [logs, setLogs] = useState([]);
     const [loading, setLoading] = useState(true);
     const [exporting, setExporting] = useState(false);
+    const [deleting, setDeleting] = useState(false);
     const [startDate, setStartDate] = useState('');
     const [endDate, setEndDate] = useState('');
+    const [lastDoc, setLastDoc] = useState(null);
+    const [firstDoc, setFirstDoc] = useState(null);
+    const [pageNumber, setPageNumber] = useState(1);
+    const [hasMore, setHasMore] = useState(true);
     const navigate = useNavigate();
     const { isAdminAuthenticated } = useAuth();
+    const PAGE_SIZE = 100;
+
+    const fetchLogs = async (direction = 'initial') => {
+        setLoading(true);
+        try {
+            let q;
+            if (direction === 'next' && lastDoc) {
+                q = query(collection(db, "attendance"), orderBy("fecha", "desc"), startAfter(lastDoc), limit(PAGE_SIZE));
+            } else {
+                q = query(collection(db, "attendance"), orderBy("fecha", "desc"), limit(PAGE_SIZE));
+                setPageNumber(1);
+            }
+
+            const querySnapshot = await getDocs(q);
+            const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+            setLogs(data);
+            setFirstDoc(querySnapshot.docs[0]);
+            setLastDoc(querySnapshot.docs[querySnapshot.docs.length - 1]);
+            setHasMore(querySnapshot.docs.length === PAGE_SIZE);
+
+        } catch (error) {
+            console.error("Error fetching logs:", error);
+            alert("Error al cargar los datos: " + error.message);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     useEffect(() => {
-        // Verificar si el usuario tiene permiso en el estado global
         if (!isAdminAuthenticated) {
             navigate('/login');
             return;
         }
-
-        const fetchLogs = async () => {
-            try {
-                const q = query(collection(db, "attendance"), orderBy("fecha", "desc"));
-                const querySnapshot = await getDocs(q);
-                const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                setLogs(data);
-            } catch (error) {
-                console.error("Error fetching logs:", error);
-                alert("Error al cargar los datos: " + error.message);
-            } finally {
-                setLoading(false);
-            }
-        };
-
         fetchLogs();
-    }, []);
+    }, [isAdminAuthenticated]);
+
+    const handleDelete = async (id) => {
+        if (!window.confirm('¿Está seguro de que desea eliminar este registro permanentemente?')) return;
+
+        try {
+            await deleteDoc(doc(db, "attendance", id));
+            setLogs(logs.filter(log => log.id !== id));
+        } catch (error) {
+            console.error("Error al borrar:", error);
+            alert("No se pudo borrar el registro.");
+        }
+    };
+
+    const handleBulkDelete = async () => {
+        if (!startDate || !endDate) {
+            alert('Por favor selecciona un rango de fechas para limpiar datos.');
+            return;
+        }
+
+        if (!window.confirm(`⚠️ ¡ATENCION! Se borraran TODOS los registros entre el ${startDate} y el ${endDate}. Esta accion no se puede deshacer. ¿Desea continuar?`)) {
+            return;
+        }
+
+        setDeleting(true);
+        try {
+            // Firestore no permite filtrado complejo por fecha guardada como string fécilmente para borrado masivo sin traerlos
+            // Así que traemos los que coincidan o filtramos en cliente si son pocos, 
+            // pero lo más seguro es filtrar por la fecha guardada.
+
+            // Nota: Para borrado masivo eficiente en cliente:
+            const q = query(collection(db, "attendance"), orderBy("fecha", "desc"));
+            const snapshot = await getDocs(q);
+
+            const toDelete = snapshot.docs.filter(doc => {
+                const data = doc.data();
+                const logDate = parseSpanishDate(data.fecha);
+                if (!logDate) return false;
+                const start = new Date(startDate);
+                const end = new Date(endDate);
+                return logDate >= start && logDate <= end;
+            });
+
+            if (toDelete.length === 0) {
+                alert("No se encontraron registros en ese rango.");
+                return;
+            }
+
+            const batch = writeBatch(db);
+            toDelete.forEach(docSnap => {
+                batch.delete(docSnap.ref);
+            });
+
+            await batch.commit();
+            alert(`Se han borrado ${toDelete.length} registros con éxito.`);
+            fetchLogs(); // Recargar
+
+        } catch (error) {
+            console.error("Error en borrado masivo:", error);
+            alert("Error al realizar la limpieza.");
+        } finally {
+            setDeleting(false);
+        }
+    };
 
     const parseSpanishDate = (dateStr) => {
         // Convierte "6/2/2026" a objeto Date
@@ -176,6 +256,26 @@ export default function Admin() {
                             ? `Exportará registros ${startDate ? `desde ${startDate}` : ''} ${endDate ? `hasta ${endDate}` : ''}`
                             : 'Exportará todos los registros disponibles'}
                     </p>
+
+                    <div className="mt-8 pt-6 border-t border-red-100">
+                        <h3 className="text-red-600 font-bold flex items-center gap-2 mb-4">
+                            <AlertTriangle size={20} />
+                            Zona de Peligro: Limpieza de Base de Datos
+                        </h3>
+                        <div className="flex items-center gap-4">
+                            <p className="text-sm text-gray-600 flex-1">
+                                Borra permanentemente los registros del rango de fechas seleccionado arriba ({startDate || '...'} - {endDate || '...'}).
+                            </p>
+                            <button
+                                onClick={handleBulkDelete}
+                                disabled={deleting || !startDate || !endDate}
+                                className="px-4 py-2 bg-red-100 text-red-700 rounded-lg hover:bg-red-200 font-bold transition flex items-center gap-2 disabled:opacity-50"
+                            >
+                                <Trash2 size={18} />
+                                {deleting ? 'Borrando...' : 'Borrar Rango'}
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
                 {/* Tabla de Registros */}
@@ -189,11 +289,12 @@ export default function Admin() {
                                     <th className="p-4 font-semibold text-gray-600">Fecha</th>
                                     <th className="p-4 font-semibold text-gray-600">Hora</th>
                                     <th className="p-4 font-semibold text-gray-600">Localidad</th>
+                                    <th className="p-4 font-semibold text-gray-600 text-center">Acciones</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100">
                                 {loading ? (
-                                    <tr><td colSpan="5" className="p-8 text-center">Cargando registros...</td></tr>
+                                    <tr><td colSpan="6" className="p-8 text-center">Cargando registros...</td></tr>
                                 ) : logs.map((log) => (
                                     <tr key={log.id} className="hover:bg-gray-50 transition">
                                         <td className="p-4 font-medium text-gray-900">{log.usuario}</td>
@@ -205,13 +306,49 @@ export default function Admin() {
                                         <td className="p-4 text-gray-600">{log.fecha}</td>
                                         <td className="p-4 text-gray-600">{log.hora}</td>
                                         <td className="p-4 text-gray-500 text-sm">{log.localidad}</td>
+                                        <td className="p-4 text-center">
+                                            <button
+                                                onClick={() => handleDelete(log.id)}
+                                                className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition"
+                                                title="Eliminar Registro"
+                                            >
+                                                <Trash2 size={18} />
+                                            </button>
+                                        </td>
                                     </tr>
                                 ))}
                                 {logs.length === 0 && !loading && (
-                                    <tr><td colSpan="5" className="p-8 text-center text-gray-500">No hay registros aún.</td></tr>
+                                    <tr><td colSpan="6" className="p-8 text-center text-gray-500">No hay registros aún.</td></tr>
                                 )}
                             </tbody>
                         </table>
+                    </div>
+
+                    {/* Pagination Controls */}
+                    <div className="p-4 bg-gray-50 border-t border-gray-100 flex justify-between items-center">
+                        <p className="text-sm text-gray-500">
+                            Mostrando {logs.length} registros (Página {pageNumber})
+                        </p>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => fetchLogs('initial')}
+                                disabled={loading || pageNumber === 1}
+                                className="px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition"
+                            >
+                                Primera Página
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setPageNumber(prev => prev + 1);
+                                    fetchLogs('next');
+                                }}
+                                disabled={loading || !hasMore}
+                                className="flex items-center gap-1 px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition font-bold"
+                            >
+                                Siguiente
+                                <ChevronRight size={16} />
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
