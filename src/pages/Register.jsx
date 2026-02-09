@@ -129,8 +129,16 @@ export default function Register() {
             const link = document.createElement('a');
             const url = URL.createObjectURL(blob);
 
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            const timestamp = `${year}${month}${day}${hours}${minutes}`;
+
             link.setAttribute('href', url);
-            link.setAttribute('download', `empleados_${new Date().toISOString().split('T')[0]}.csv`);
+            link.setAttribute('download', `empleados_${timestamp}.csv`);
             link.style.visibility = 'hidden';
             document.body.appendChild(link);
             link.click();
@@ -142,6 +150,71 @@ export default function Register() {
         } finally {
             setExporting(false);
         }
+    };
+
+    const handleImportCSV = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        setLoading(true);
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+            try {
+                const text = event.target.result;
+                const lines = text.split('\n').map(line => line.trim()).filter(line => line);
+
+                // Saltar encabezado si existe
+                const startIndex = lines[0].toLowerCase().includes('email') ? 1 : 0;
+                const emailsToRestore = lines.slice(startIndex).map(line => line.split(',')[0].trim().toLowerCase());
+
+                if (emailsToRestore.length === 0) {
+                    alert('No se encontraron correos válidos en el archivo.');
+                    setLoading(false);
+                    return;
+                }
+
+                // 1. Obtener empleados actuales para no duplicar
+                const currentSnap = await getDocs(collection(db, "employees"));
+                const currentEmails = new Set(currentSnap.docs.map(doc => doc.data().email.toLowerCase().trim()));
+
+                let count = 0;
+                const { writeBatch, doc, deleteDoc } = await import('firebase/firestore');
+                const batch = writeBatch(db);
+
+                for (const emailToRestore of emailsToRestore) {
+                    if (emailToRestore && !currentEmails.has(emailToRestore)) {
+                        const newDocRef = doc(collection(db, "employees"));
+                        batch.set(newDocRef, {
+                            email: emailToRestore,
+                            fechaCreacion: serverTimestamp(),
+                            recuperado: true
+                        });
+                        count++;
+
+                        // Intentar limpiar de la cola de borrado si está allí
+                        const qQueue = query(collection(db, "deletionQueue"), where("email", "==", emailToRestore));
+                        const snapQueue = await getDocs(qQueue);
+                        snapQueue.forEach((d) => {
+                            batch.delete(d.ref);
+                        });
+                    }
+                }
+
+                if (count > 0) {
+                    await batch.commit();
+                    alert(`Se han recuperado ${count} empleados exitosamente.`);
+                } else {
+                    alert('Todos los empleados del archivo ya están en la lista activa.');
+                }
+            } catch (err) {
+                console.error("Error al importar CSV:", err);
+                alert("Error al procesar el archivo CSV.");
+            } finally {
+                setLoading(false);
+                e.target.value = null; // Reset input
+            }
+        };
+        reader.readAsText(file);
     };
 
     return (
@@ -200,23 +273,42 @@ export default function Register() {
                         {loading ? 'Creando...' : 'Crear Cuenta'}
                     </button>
 
-                    <div className="grid grid-cols-2 gap-3 mt-4">
+                    <div className="grid grid-cols-1 gap-3 mt-4">
+                        <div className="grid grid-cols-2 gap-3">
+                            <button
+                                type="button"
+                                onClick={() => setShowDeleteModal(true)}
+                                className="flex items-center justify-center gap-2 py-2.5 px-4 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 font-bold transition shadow-sm"
+                            >
+                                <Trash2 size={16} />
+                                Borrar Empleado
+                            </button>
+                            <button
+                                type="button"
+                                onClick={exportEmployeesToCSV}
+                                disabled={exporting}
+                                className="flex items-center justify-center gap-2 py-2.5 px-4 bg-blue-500 text-white text-xs rounded-lg hover:bg-blue-600 font-bold transition shadow-sm disabled:opacity-50"
+                            >
+                                {exporting ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
+                                Exportar CSV
+                            </button>
+                        </div>
+
+                        <input
+                            type="file"
+                            id="csv-upload"
+                            accept=".csv"
+                            onChange={handleImportCSV}
+                            className="hidden"
+                        />
                         <button
                             type="button"
-                            onClick={() => setShowDeleteModal(true)}
-                            className="flex items-center justify-center gap-2 py-2.5 px-4 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 font-bold transition shadow-sm"
+                            onClick={() => document.getElementById('csv-upload').click()}
+                            disabled={loading}
+                            className="flex items-center justify-center gap-2 py-2.5 px-4 bg-orange-500 text-white text-xs rounded-lg hover:bg-orange-600 font-bold transition shadow-sm disabled:opacity-50 border border-orange-400"
                         >
-                            <Trash2 size={16} />
-                            Borrar Empleado
-                        </button>
-                        <button
-                            type="button"
-                            onClick={exportEmployeesToCSV}
-                            disabled={exporting}
-                            className="flex items-center justify-center gap-2 py-2.5 px-4 bg-blue-500 text-white text-xs rounded-lg hover:bg-blue-600 font-bold transition shadow-sm disabled:opacity-50"
-                        >
-                            {exporting ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
-                            Exportar CSV
+                            <Download size={16} className="rotate-180" />
+                            Recuperar desde CSV
                         </button>
                     </div>
 
