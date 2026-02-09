@@ -8,7 +8,7 @@ import AdminPasswordModal from '../components/AdminPasswordModal';
 export default function Login() {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
-    const { login } = useAuth();
+    const { login, logout } = useAuth();
     const navigate = useNavigate();
     const [error, setError] = useState('');
     const [showAdminModal, setShowAdminModal] = useState(false);

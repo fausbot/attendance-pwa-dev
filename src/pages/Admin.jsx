@@ -61,10 +61,22 @@ export default function Admin() {
             const empSnap = await getDocs(collection(db, "employees"));
             if (empSnap.empty) {
                 console.log("Detectada lista de empleados vacía. Iniciando auto-restauración...");
+
+                // 1. Obtener correos en la cola de borrado para NO restaurarlos
+                const queueSnap = await getDocs(collection(db, "deletionQueue"));
+                const deletedEmails = new Set();
+                queueSnap.forEach(doc => {
+                    if (doc.data().email) deletedEmails.add(doc.data().email.toLowerCase().trim());
+                });
+
+                // 2. Obtener correos del historial de asistencia
                 const attSnap = await getDocs(collection(db, "attendance"));
                 const uniqueEmails = new Set();
                 attSnap.forEach(doc => {
-                    if (doc.data().usuario) uniqueEmails.add(doc.data().usuario);
+                    const email = doc.data().usuario?.toLowerCase().trim();
+                    if (email && !deletedEmails.has(email)) {
+                        uniqueEmails.add(email);
+                    }
                 });
 
                 if (uniqueEmails.size > 0) {
@@ -78,7 +90,7 @@ export default function Admin() {
                         });
                     });
                     await batch.commit();
-                    console.log(`Se han restaurado ${uniqueEmails.size} empleados desde la historia de asistencia.`);
+                    console.log(`Se han restaurado ${uniqueEmails.size} empleados desde la historia de asistencia (excluyendo borrados).`);
                 }
             }
         } catch (err) {
