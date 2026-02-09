@@ -18,9 +18,25 @@ export default function Login() {
         e.preventDefault();
         try {
             setError('');
-            // Auto-append domain if not present
-            const emailToUse = email.includes('@') ? email : `${email}@vertiaguas.com`;
-            await login(emailToUse, password);
+            // Auto-append domain if not present y normalizar
+            let emailToUse = email.includes('@') ? email : `${email}@vertiaguas.com`;
+            emailToUse = emailToUse.toLowerCase().trim();
+            const userCredential = await login(emailToUse, password);
+            const user = userCredential.user;
+
+            // Verificar lista blanca en Firestore (BLOQUEO DE COLA DE BORRADO)
+            const { db } = await import('../firebaseConfig');
+            const { collection, query, where, getDocs } = await import('firebase/firestore');
+
+            const q = query(collection(db, "employees"), where("email", "==", user.email));
+            const querySnapshot = await getDocs(q);
+
+            if (querySnapshot.empty) {
+                await logout();
+                setError('Acceso denegado: Usuario no autorizado o dado de baja.');
+                return;
+            }
+
             navigate('/dashboard');
         } catch (err) {
             setError('Error al ingresar: Verifique sus datos');

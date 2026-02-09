@@ -34,8 +34,9 @@ export default function Register() {
         try {
             setError('');
             setLoading(true);
-            // Auto-agregar dominio si no está presente
-            const emailToUse = email.includes('@') ? email : `${email}@vertiaguas.com`;
+            // Auto-agregar dominio si no está presente y normalizar a minúsculas
+            let emailToUse = email.includes('@') ? email : `${email}@vertiaguas.com`;
+            emailToUse = emailToUse.toLowerCase().trim();
 
             await createUserWithEmailAndPassword(auth, emailToUse, password);
 
@@ -54,16 +55,28 @@ export default function Register() {
             if (err.code === 'auth/email-already-in-use') {
                 // Lógica de "vincular" si ya existe en Auth pero no en Firestore
                 try {
-                    const emailToUse = email.includes('@') ? email : `${email}@vertiaguas.com`;
+                    let emailToUse = email.includes('@') ? email : `${email}@vertiaguas.com`;
+                    emailToUse = emailToUse.toLowerCase().trim();
+
                     const q = query(collection(db, "employees"), where("email", "==", emailToUse));
                     const snap = await getDocs(q);
 
                     if (snap.empty) {
+                        // Agregar a la lista de empleados
                         await addDoc(collection(db, "employees"), {
                             email: emailToUse,
                             fechaCreacion: serverTimestamp()
                         });
-                        alert('Este usuario ya existía en Auth y ha sido vinculado correctamente a la lista de gestión.');
+
+                        // Limpiar de la cola de borrado si estaba allí
+                        const { deleteDoc, doc } = await import('firebase/firestore');
+                        const qQueue = query(collection(db, "deletionQueue"), where("email", "==", emailToUse));
+                        const snapQueue = await getDocs(qQueue);
+                        snapQueue.forEach(async (d) => {
+                            await deleteDoc(d.ref);
+                        });
+
+                        alert('Este usuario ya tenía cuenta de acceso. Se ha re-vinculado correctamente a la lista de empleados.');
                         setEmail('');
                         setPassword('');
                         setConfirmPassword('');
@@ -71,7 +84,7 @@ export default function Register() {
                         setError('Este usuario ya existe y ya está en la lista de gestión.');
                     }
                 } catch (linkErr) {
-                    setError('El usuario ya existe, pero hubo un error al vincularlo: ' + linkErr.message);
+                    setError('El usuario ya existe, pero hubo un error al sincronizarlo: ' + linkErr.message);
                 }
             } else if (err.code === 'auth/weak-password') {
                 setError('La contraseña debe tener al menos 6 caracteres.');

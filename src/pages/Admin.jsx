@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { db } from '../firebaseConfig';
-import { collection, query, orderBy, getDocs, limit, startAfter, deleteDoc, doc, writeBatch, where } from 'firebase/firestore';
+import { collection, query, orderBy, getDocs, limit, startAfter, deleteDoc, doc, writeBatch, where, serverTimestamp } from 'firebase/firestore';
 import { useNavigate } from 'react-router-dom';
 import { Download, Calendar, Trash2, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
@@ -53,7 +53,38 @@ export default function Admin() {
             return;
         }
         fetchLogs();
+        checkAndRestoreEmployees();
     }, [isAdminAuthenticated]);
+
+    const checkAndRestoreEmployees = async () => {
+        try {
+            const empSnap = await getDocs(collection(db, "employees"));
+            if (empSnap.empty) {
+                console.log("Detectada lista de empleados vacía. Iniciando auto-restauración...");
+                const attSnap = await getDocs(collection(db, "attendance"));
+                const uniqueEmails = new Set();
+                attSnap.forEach(doc => {
+                    if (doc.data().usuario) uniqueEmails.add(doc.data().usuario);
+                });
+
+                if (uniqueEmails.size > 0) {
+                    const batch = writeBatch(db);
+                    uniqueEmails.forEach(email => {
+                        const newDocRef = doc(collection(db, "employees"));
+                        batch.set(newDocRef, {
+                            email: email,
+                            fechaCreacion: serverTimestamp(),
+                            estado: 'activo'
+                        });
+                    });
+                    await batch.commit();
+                    console.log(`Se han restaurado ${uniqueEmails.size} empleados desde la historia de asistencia.`);
+                }
+            }
+        } catch (err) {
+            console.error("Error en auto-restauración:", err);
+        }
+    };
 
     const handleDelete = async (id) => {
         if (!window.confirm('¿Está seguro de que desea eliminar este registro permanentemente?')) return;

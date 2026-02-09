@@ -34,14 +34,9 @@ export default function Dashboard() {
                 const querySnapshot = await getDocs(q);
 
                 if (querySnapshot.empty) {
-                    // Si no está en la colección pero está logueado, es un usuario antiguo.
-                    // Lo agregamos automáticamente para que aparezca en la lista del admin
-                    // y pueda ser gestionado (exportado/borrado).
-                    await addDoc(collection(db, "employees"), {
-                        email: currentUser.email,
-                        fechaCreacion: serverTimestamp()
-                    });
-                    console.log("Usuario migrado automáticamente a la colección de gestión.");
+                    console.warn("Acceso denegado: Usuario no encontrado en lista activa.");
+                    logout();
+                    navigate('/login');
                 }
             } catch (err) {
                 console.error("Error verificando acceso:", err);
